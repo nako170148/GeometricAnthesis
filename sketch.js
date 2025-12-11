@@ -63,6 +63,21 @@ let waters = [
   { key: "high", label: "たっぷり", level: 0.95, color: [60, 120, 255] },
 ];
 let selectedWaterIndex = 1;
+let cam;
+let camReady = false;
+let hands = null;
+let handModelStatus = "idle";
+let handStatusDetail = "";
+let pointerX = null;
+let pointerY = null;
+let isPinching = false;
+let wasPinching = false;
+let lastPrimaryActionAtMs = 0;
+let lastVideoTimeMs = -1; // not heavily used now, kept for possible tuning
+let lastHandInferMs = 0;
+let handInferInFlight = false;
+let uiPointerX = 0;
+let uiPointerY = 0;
 let growProgress = 0;
 let bloomStartFrame = 0;
 let lastGrowAngle = null;
@@ -71,10 +86,42 @@ let bloomButtons = [];
 let waterButtons = [];
 let waterNextButton = null;
 
+async function initHandModel() {
+  try {
+    if (typeof Hands === "undefined") {
+      handModelStatus = "noHands";
+      handStatusDetail = "Hands class undefined";
+      return;
+    }
+
+    hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+    });
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 0,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    });
+    hands.onResults(onHandsResults);
+
+    handModelStatus = "ready";
+    handStatusDetail = "Hands ready";
+  } catch (e) {
+    console.error("Failed to load HandLandmarker", e);
+    handModelStatus = "error";
+    handStatusDetail = String(e && e.message ? e.message : e);
+  }
+}
+
 function setup() {
   createCanvas(windowWidth, windowHeight);
   bgColor = color(10, 10, 20);
   accentColor = color(...colors[selectedColorIndex].value);
+  cam = createCapture(VIDEO, () => (camReady = true));
+  cam.size(640, 480);
+  cam.hide();
+  initHandModel();
 }
 
 function withSeedClip(shape, cx, cy, size, drawFn) {
@@ -158,7 +205,25 @@ function traceSeedPath(ctx, shape, cx, cy, size) {
 }
 
 function draw() {
-  background(bgColor);
+  // UIで使うポインタ座標（手が取れていれば手、なければマウス）
+  const px = pointerX !== null ? pointerX : mouseX;
+  const py = pointerY !== null ? pointerY : mouseY;
+  uiPointerX = px;
+  uiPointerY = py;
+
+  if (camReady) {
+    drawCameraBackdrop();
+    // 全シーン共通で、カメラの上に少し暗いオーバーレイをかける
+    // grow / bloom ではこの上から土色のオーバーレイを重ねて雰囲気を出す
+    push();
+    noStroke();
+    rectMode(CORNER);
+    fill(10, 10, 20, 170);
+    rect(0, 0, width, height);
+    pop();
+  } else {
+    background(bgColor);
+  }
   if (currentScene === "opening") {
     drawOpeningScene();
   } else if (currentScene === "colorSelect") {
@@ -176,7 +241,127 @@ function draw() {
   }
 
   // マウス位置を仮の "手カーソル" として使う
-  drawCursorCircle(mouseX, mouseY);
+  drawCursorCircle(uiPointerX, uiPointerY);
+
+  updateHandTracking();
+
+  // ピンチジェスチャーをクリック扱いにする
+  const pinchNow = isPinching;
+  if (pointerX !== null && pointerY !== null && pinchNow) {
+    const nowMs = millis();
+    if (nowMs - lastPrimaryActionAtMs > 500) {
+      handlePrimaryAction();
+      lastPrimaryActionAtMs = nowMs;
+    }
+  }
+  wasPinching = pinchNow;
+
+  if (pointerX !== null && pointerY !== null) {
+    push();
+    noFill();
+    stroke(0, 255, 0);
+    strokeWeight(3);
+    circle(pointerX, pointerY, cursorSize * 1.4);
+    pop();
+  }
+
+  // デバッグ表示を一番上に重ねる
+  push();
+  fill(255);
+  textSize(16);
+  textAlign(LEFT, BOTTOM);
+  text(
+    `camReady: ${camReady}  model: ${handModelStatus}  pinch: ${isPinching}`,
+    30,
+    height - 30
+  );
+  textSize(12);
+  text(handStatusDetail, 30, height - 12);
+  pop();
+}
+
+function drawCameraBackdrop() {
+  push();
+  translate(width, 0);
+  scale(-1, 1); // mirror so movement feels natural
+  const camAspect = cam.width / cam.height;
+  const canvasAspect = width / height;
+  let drawWidth, drawHeight;
+  if (canvasAspect > camAspect) {
+    drawWidth = width;
+    drawHeight = width / camAspect;
+  } else {
+    drawHeight = height;
+    drawWidth = height * camAspect;
+  }
+  const offsetY = (height - drawHeight) / 2;
+  image(cam, 0, offsetY, drawWidth, drawHeight);
+  pop();
+}
+
+function updateHandTracking() {
+  if (!hands || !camReady) {
+    pointerX = null;
+    pointerY = null;
+    isPinching = false;
+    return;
+  }
+
+  const video = cam.elt;
+  if (!video || video.readyState < 2) {
+    return;
+  }
+
+  // 推論が重いので、200ms ごと & 1リクエストのみ同時に処理する
+  const nowMs = performance.now();
+  if (handInferInFlight || nowMs - lastHandInferMs < 200) {
+    return;
+  }
+  handInferInFlight = true;
+  lastHandInferMs = nowMs;
+
+  hands
+    .send({ image: video })
+    .catch((e) => {
+      handModelStatus = "error";
+      handStatusDetail = String(e && e.message ? e.message : e);
+    })
+    .finally(() => {
+      handInferInFlight = false;
+    });
+}
+
+function onHandsResults(results) {
+  const lmList = results.multiHandLandmarks;
+  if (!lmList || !lmList.length) {
+    pointerX = null;
+    pointerY = null;
+    isPinching = false;
+    return;
+  }
+
+  const lm = lmList[0];
+  const indexTip = lm[8];
+  const thumbTip = lm[4];
+
+  const ixNorm = 1 - indexTip.x; // 鏡映しにする
+  const iyNorm = indexTip.y;
+  const txNorm = 1 - thumbTip.x;
+  const tyNorm = thumbTip.y;
+
+  const ix = ixNorm * width;
+  const iy = iyNorm * height;
+  const tx = txNorm * width;
+  const ty = tyNorm * height;
+
+  pointerX = ix;
+  pointerY = iy;
+
+  const dx = ix - tx;
+  const dy = iy - ty;
+  const distSq = dx * dx + dy * dy;
+  const pinchThresholdSq = 80 * 80;
+  isPinching = distSq < pinchThresholdSq;
 }
 
 function drawOpeningScene() {
@@ -234,43 +419,38 @@ function drawColorScene() {
   textSize(14);
   fill(210);
   text("今日はマウスで色を選択します", width / 2, height * 0.27);
+  let totalColors = colors.length;
 
-  // 色パレットを中央に横並びで配置
-  let paletteWidth = min(width * 0.7, 520);
-  let itemWidth = paletteWidth / colors.length;
-  let centerY = height * 0.55;
+  for (let i = 0; i < totalColors; i++) {
+    let layout = getColorItemLayout(i);
+    let cx = layout.cx;
+    let cy = layout.cy;
+    let r = layout.r;
+    let hitR = layout.hitR;
 
-  for (let i = 0; i < colors.length; i++) {
-    let cx = width / 2 - paletteWidth / 2 + itemWidth * (i + 0.5);
-    let cy = centerY;
-    let r = itemWidth * 0.35;
-
-    // ホバー判定
-    let isHover = dist(mouseX, mouseY, cx, cy) < r * 1.1;
+    let isHover = dist(uiPointerX, uiPointerY, cx, cy) < hitR;
     let isSelected = i === selectedColorIndex;
 
     let [baseR, baseG, baseB] = colors[i].value;
 
-    // 外側のリング
     noFill();
     strokeWeight(isSelected ? 5 : isHover ? 3 : 2);
     stroke(baseR, baseG, baseB, 220);
-    circle(cx, cy, r * 2.4);
+    circle(cx, cy, r * 2.2);
 
-    // 色の本体
     noStroke();
-    let factor = isSelected ? 1.35 : isHover ? 1.2 : 1.0;
+    let factor = isSelected ? 1.35 : isHover ? 1.15 : 1.0;
     fill(baseR, baseG, baseB);
-    circle(cx, cy, r * 2 * factor);
+    circle(cx, cy, r * 2.0 * factor);
   }
 
   // 次のシーンへ進むボタン（今日はクリックで遷移）
-  let btnW = 120;
-  let btnH = 40;
-  let btnX = width * 0.85;
-  let btnY = height * 0.85;
+  let btnW = min(width * 0.5, 420);
+  let btnH = 96;
+  let btnX = width * 0.8;
+  let btnY = height * 0.86;
 
-  let isHoverNext = mouseX > btnX - btnW / 2 && mouseX < btnX + btnW / 2 && mouseY > btnY - btnH / 2 && mouseY < btnY + btnH / 2;
+  let isHoverNext = uiPointerX > btnX - btnW / 2 && uiPointerX < btnX + btnW / 2 && uiPointerY > btnY - btnH / 2 && uiPointerY < btnY + btnH / 2;
 
   rectMode(CENTER);
   if (isHoverNext) {
@@ -311,33 +491,33 @@ function drawSeedScene() {
     height * 0.27
   );
 
-  // 種のパレットを中央に横並びで配置
-  let paletteWidth = min(width * 0.8, 640);
-  let itemWidth = paletteWidth / seeds.length;
-  let centerY = height * 0.55;
-
   textSize(24);
-  for (let i = 0; i < seeds.length; i++) {
-    let cx = width / 2 - paletteWidth / 2 + itemWidth * (i + 0.5);
-    let cy = centerY;
-    let w = itemWidth * 0.7;
-    let h = w;
+  let totalSeeds = seeds.length;
+  for (let i = 0; i < totalSeeds; i++) {
+    let layout = getSeedItemLayout(i);
+    let cx = layout.cx;
+    let cy = layout.cy;
+    let size = layout.size;
+    let hitW = layout.hitW;
+    let hitH = layout.hitH;
 
-    // ホバー判定
-    let isHover = mouseX > cx - w / 2 && mouseX < cx + w / 2 && mouseY > cy - h / 2 && mouseY < cy + h / 2;
+    let isHover =
+      uiPointerX > cx - hitW / 2 &&
+      uiPointerX < cx + hitW / 2 &&
+      uiPointerY > cy - hitH / 2 &&
+      uiPointerY < cy + hitH / 2;
     let isSelected = isOuterPhase ? i === selectedSeedIndex : i === selectedNutrientIndex;
 
-    // 図形アイコン（枠ではなく形そのものを強調）
-    drawSeedIcon(seeds[i].shape, cx, cy, w * 0.7, isHover, isSelected);
+    drawSeedIcon(seeds[i].shape, cx, cy, size, isHover, isSelected);
   }
 
   // 次のシーンへ進むボタン（今日はクリックで遷移）
-  let btnW = 120;
-  let btnH = 40;
-  let btnX = width * 0.85;
-  let btnY = height * 0.85;
+  let btnW = Math.min(width * 0.5, 420);
+  let btnH = 96;
+  let btnX = width * 0.8;
+  let btnY = height * 0.86;
 
-  let isHoverNext = mouseX > btnX - btnW / 2 && mouseX < btnX + btnW / 2 && mouseY > btnY - btnH / 2 && mouseY < btnY + btnH / 2;
+  let isHoverNext = uiPointerX > btnX - btnW / 2 && uiPointerX < btnX + btnW / 2 && uiPointerY > btnY - btnH / 2 && uiPointerY < btnY + btnH / 2;
 
   rectMode(CENTER);
   if (isHoverNext) {
@@ -351,6 +531,77 @@ function drawSeedScene() {
   textAlign(CENTER, CENTER);
   textSize(16);
   text("次へ", btnX, btnY);
+}
+
+function getColorItemLayout(index) {
+  const itemsPerRow = 4;
+  const rows = Math.ceil(colors.length / itemsPerRow);
+  const row = Math.floor(index / itemsPerRow);
+  const col = index % itemsPerRow;
+
+  const gridWidth = Math.min(width * 0.9, 820);
+  const cellWidth = gridWidth / itemsPerRow;
+  const baseRadius = Math.min(cellWidth * 0.38, height * 0.1);
+
+  const centerYBase = height * 0.58;
+  const rowSpacing = baseRadius * 3.5;
+  const cy = centerYBase + (row - (rows - 1) / 2) * rowSpacing;
+
+  const startX = width / 2 - gridWidth / 2;
+  const cx = startX + cellWidth * (col + 0.5);
+
+  const r = baseRadius;
+  const hitR = r * 2.0;
+
+  return { cx, cy, r, hitR };
+}
+
+function getSeedItemLayout(index) {
+  const itemsPerRow = 4;
+  const rows = Math.ceil(seeds.length / itemsPerRow);
+  const row = Math.floor(index / itemsPerRow);
+  const col = index % itemsPerRow;
+
+  const gridWidth = Math.min(width * 0.9, 880);
+  const cellWidth = gridWidth / itemsPerRow;
+  const baseSize = Math.min(cellWidth * 0.7, height * 0.2);
+
+  const centerYBase = height * 0.6;
+  const rowSpacing = baseSize * 1.9;
+  const cy = centerYBase + (row - (rows - 1) / 2) * rowSpacing;
+
+  const startX = width / 2 - gridWidth / 2;
+  const cx = startX + cellWidth * (col + 0.5);
+
+  const size = baseSize;
+  const hitW = size * 1.7;
+  const hitH = size * 1.7;
+
+  return { cx, cy, size, hitW, hitH };
+}
+
+function getSoilItemLayout(index) {
+  const itemsPerRow = 2;
+  const rows = Math.ceil(soils.length / itemsPerRow);
+  const row = Math.floor(index / itemsPerRow);
+  const col = index % itemsPerRow;
+
+  const gridWidth = Math.min(width * 0.85, 720);
+  const cellWidth = gridWidth / itemsPerRow;
+  const baseW = Math.min(cellWidth * 0.85, width * 0.35);
+  const baseH = baseW * 0.6;
+
+  const centerYBase = height * 0.58;
+  const rowSpacing = baseH * 2.3;
+  const cy = centerYBase + (row - (rows - 1) / 2) * rowSpacing;
+
+  const startX = width / 2 - gridWidth / 2;
+  const cx = startX + cellWidth * (col + 0.5);
+
+  const hitW = baseW * 1.4;
+  const hitH = baseH * 1.6;
+
+  return { cx, cy, w: baseW, h: baseH, hitW, hitH };
 }
 
 function drawCursorCircle(x, y) {
@@ -368,6 +619,10 @@ function windowResized() {
 }
 
 function mousePressed() {
+  handlePrimaryAction();
+}
+
+function handlePrimaryAction() {
   if (currentScene === "opening") {
     currentScene = "colorSelect";
   } else if (currentScene === "colorSelect") {
@@ -392,12 +647,12 @@ function mousePressed() {
 }
 
 function handleWaterNextClick() {
-  let btnW = 120;
-  let btnH = 40;
-  let btnX = width * 0.85;
-  let btnY = height * 0.85;
+  let btnW = Math.min(width * 0.3, 260);
+  let btnH = 64;
+  let btnX = width * 0.8;
+  let btnY = height * 0.86;
 
-  if (mouseX > btnX - btnW / 2 && mouseX < btnX + btnW / 2 && mouseY > btnY - btnH / 2 && mouseY < btnY + btnH / 2) {
+  if (uiPointerX > btnX - btnW / 2 && uiPointerX < btnX + btnW / 2 && uiPointerY > btnY - btnH / 2 && uiPointerY < btnY + btnH / 2) {
     startGrowScene();
     return true;
   }
@@ -420,19 +675,16 @@ function drawSoilScene() {
   fill(210);
   text("今日はマウスで土を選択します", width / 2, height * 0.27);
 
-  // 土のパレットを中央に横並びで配置
-  let paletteWidth = min(width * 0.7, 520);
-  let itemWidth = paletteWidth / soils.length;
-  let centerY = height * 0.55;
-
   for (let i = 0; i < soils.length; i++) {
-    let cx = width / 2 - paletteWidth / 2 + itemWidth * (i + 0.5);
-    let cy = centerY;
-    let w = itemWidth * 0.6;
-    let h = w * 0.5;
+    let layout = getSoilItemLayout(i);
+    let cx = layout.cx;
+    let cy = layout.cy;
+    let w = layout.w;
+    let h = layout.h;
+    let hitW = layout.hitW;
+    let hitH = layout.hitH;
 
-    // ホバー判定
-    let isHover = mouseX > cx - w / 2 && mouseX < cx + w / 2 && mouseY > cy - h / 2 && mouseY < cy + h / 2;
+    let isHover = uiPointerX > cx - hitW / 2 && uiPointerX < cx + hitW / 2 && uiPointerY > cy - hitH / 2 && uiPointerY < cy + hitH / 2;
     let isSelected = i === selectedSoilIndex;
 
     // 土の色
@@ -463,17 +715,17 @@ function drawSoilScene() {
     // ラベル
     fill(230);
     textAlign(CENTER, TOP);
-    textSize(14);
-    text(soils[i].label, cx, cy + h * sizeFactor * 0.6);
+    textSize(20);
+    text(soils[i].label, cx, cy + h * sizeFactor * 0.7);
   }
 
   // 次のシーン（水）へ進むボタン（今日はクリックで遷移）
-  let btnW = 120;
-  let btnH = 40;
-  let btnX = width * 0.85;
-  let btnY = height * 0.85;
+  let btnW = min(width * 0.4, 360);
+  let btnH = 80;
+  let btnX = width * 0.8;
+  let btnY = height * 0.86;
 
-  let isHoverNext = mouseX > btnX - btnW / 2 && mouseX < btnX + btnW / 2 && mouseY > btnY - btnH / 2 && mouseY < btnY + btnH / 2;
+  let isHoverNext = uiPointerX > btnX - btnW / 2 && uiPointerX < btnX + btnW / 2 && uiPointerY > btnY - btnH / 2 && uiPointerY < btnY + btnH / 2;
 
   rectMode(CENTER);
   if (isHoverNext) {
@@ -501,7 +753,7 @@ function drawWaterScene() {
   fill(210);
   text("今日はマウスで水量を選択します", width / 2, height * 0.27);
 
-  let paletteWidth = min(width * 0.6, 420);
+  let paletteWidth = min(width * 0.8, 640);
   let itemWidth = paletteWidth / waters.length;
   let centerY = height * 0.55;
   waterButtons = [];
@@ -509,13 +761,13 @@ function drawWaterScene() {
   for (let i = 0; i < waters.length; i++) {
     let cx = width / 2 - paletteWidth / 2 + itemWidth * (i + 0.5);
     let cy = centerY;
-    let radius = itemWidth * 0.35;
+    let radius = itemWidth * 0.45;
 
-    let isHover = dist(mouseX, mouseY, cx, cy) < radius * 1.1;
+    let isHover = dist(uiPointerX, uiPointerY, cx, cy) < radius * 1.2;
     let isSelected = i === selectedWaterIndex;
 
     let [r, g, b] = waters[i].color;
-    let sizeFactor = isSelected ? 1.3 : isHover ? 1.15 : 1.0;
+    let sizeFactor = isSelected ? 1.25 : isHover ? 1.12 : 1.0;
 
     // 波紋風リング
     noFill();
@@ -539,17 +791,17 @@ function drawWaterScene() {
     textSize(14);
     text(waters[i].label, cx, cy + radius * sizeFactor + 10);
 
-    waterButtons.push({ cx, cy, radius: radius * sizeFactor, index: i });
+    waterButtons.push({ cx, cy, radius: radius * sizeFactor * 1.1, index: i });
   }
 
   // 次へ
-  let btnW = 120;
-  let btnH = 40;
-  let btnX = width * 0.85;
-  let btnY = height * 0.85;
+  let btnW = min(width * 0.3, 260);
+  let btnH = 64;
+  let btnX = width * 0.8;
+  let btnY = height * 0.86;
   waterNextButton = { x: btnX - btnW / 2, y: btnY - btnH / 2, w: btnW, h: btnH };
 
-  let isHoverNext = isPointInsideRect(mouseX, mouseY, waterNextButton.x, waterNextButton.y, waterNextButton.w, waterNextButton.h);
+  let isHoverNext = isPointInsideRect(uiPointerX, uiPointerY, waterNextButton.x, waterNextButton.y, waterNextButton.w, waterNextButton.h);
 
   rectMode(CENTER);
   if (isHoverNext) {
@@ -576,11 +828,8 @@ function drawGrowScene() {
   let centerX = width / 2;
   let centerY = height / 2;
 
-  // subtle background overlay based on土
-  noStroke();
-  fill(soilStyle.bgTint, 45);
-  rectMode(CORNER);
-  rect(0, 0, width, height);
+  // growシーンでは、カメラの上に土色をフルスクリーンでは重ねず、
+  // シード形状の内側だけにうっすら色を乗せる
 
   let reveal = progress > 0 ? constrain(pow(progress, 0.85), 0, 1) : 0;
   let outlineStrokeGrow = color(red(accentColor), green(accentColor), blue(accentColor), max(80, 180 * reveal));
@@ -591,7 +840,8 @@ function drawGrowScene() {
     let ghostStroke = color(red(accentColor), green(accentColor), blue(accentColor), 50 * reveal);
 
     withSeedClip(currentShape, centerX, centerY, shapeSize, () => {
-      fill(red(soilStyle.bgTint), green(soilStyle.bgTint), blue(soilStyle.bgTint), 80 * reveal);
+      // カメラ映像を優先したいので、土色のオーバーレイはごく薄くする
+      fill(red(soilStyle.bgTint), green(soilStyle.bgTint), blue(soilStyle.bgTint), 15 * reveal);
       rect(0, 0, width, height);
       drawSpirograph(params, progress, {
         strokeWidth: soilStyle.strokeWeight + 0.6,
@@ -611,14 +861,17 @@ function drawGrowScene() {
   }
 
   // Progress bar
-  let barWidth = width * 0.5;
+  rectMode(CORNER);
+  let barWidth = Math.min(width * 0.5, 480);
+  let barHeight = 14;
   let barX = (width - barWidth) / 2;
-  let barY = height * 0.82;
+  // 花の少し下あたりに来るように位置を調整
+  let barY = height * 0.74;
   noStroke();
   fill(255, 40);
-  rect(barX, barY, barWidth, 12, 999);
+  rect(barX, barY, barWidth, barHeight, 999);
   fill(red(accentColor), green(accentColor), blue(accentColor), 200);
-  rect(barX, barY, barWidth * progress, 12, 999);
+  rect(barX, barY, barWidth * progress, barHeight, 999);
 
   // Instructions
   textAlign(CENTER, CENTER);
@@ -644,11 +897,6 @@ function drawBloomScene() {
   let centerX = width / 2;
   let centerY = height / 2;
 
-  rectMode(CORNER);
-  noStroke();
-  fill(soilStyle.bgTint, 55);
-  rect(0, 0, width, height);
-
   let accentR = red(accentColor);
   let accentG = green(accentColor);
   let accentB = blue(accentColor);
@@ -658,7 +906,10 @@ function drawBloomScene() {
   let glowStroke = color(255, 230, 245, 230);
 
   withSeedClip(currentShape, centerX, centerY, shapeSize, () => {
-    fill(red(soilStyle.bgTint), green(soilStyle.bgTint), blue(soilStyle.bgTint), 90);
+    // bloomシーンでも、カメラ映像を優先するため土色オーバーレイはかなり薄くする
+    rectMode(CORNER);
+    noStroke();
+    fill(red(soilStyle.bgTint), green(soilStyle.bgTint), blue(soilStyle.bgTint), 15);
     rect(0, 0, width, height);
 
     // メインの花：growシーンと同じ描写を100%進行で行い、pulsingだけ加える
@@ -695,15 +946,15 @@ function drawBloomScene() {
   text("ゆらぎと光、音でお祝い（演出は今後実装）", width / 2, height * 0.25);
 
   // Buttons to restart journey
-  let btnWidth = 180;
-  let btnHeight = 46;
+  let btnWidth = Math.min(width * 0.35, 260);
+  let btnHeight = 70;
   bloomButtons = [
-    { label: "Openingへ", target: "opening", x: width * 0.4 - btnWidth / 2, y: height * 0.78 - btnHeight / 2 },
-    { label: "色選びへ", target: "colorSelect", x: width * 0.6 - btnWidth / 2, y: height * 0.78 - btnHeight / 2 },
+    { label: "Openingへ", target: "opening", x: width * 0.35 - btnWidth / 2, y: height * 0.8 - btnHeight / 2 },
+    { label: "色選びへ", target: "colorSelect", x: width * 0.65 - btnWidth / 2, y: height * 0.8 - btnHeight / 2 },
   ];
 
   for (const btn of bloomButtons) {
-    let hovering = isPointInsideRect(mouseX, mouseY, btn.x, btn.y, btnWidth, btnHeight);
+    let hovering = isPointInsideRect(uiPointerX, uiPointerY, btn.x, btn.y, btnWidth, btnHeight);
     fill(hovering ? color(255, 200, 230, 230) : color(200, 160, 210, 200));
     rect(btn.x, btn.y, btnWidth, btnHeight, 12);
     fill(40, 20, 60);
@@ -725,7 +976,7 @@ function drawSeedIcon(shape, cx, cy, size, isHover, isSelected) {
     fillColor = hoverColor;
   }
 
-  let effectiveSize = size * (isSelected ? 1.4 : isHover ? 1.2 : 1.0);
+  let effectiveSize = size * (isSelected ? 1.3 : isHover ? 1.15 : 1.0);
 
   noStroke();
   fill(fillColor);
@@ -780,8 +1031,9 @@ function drawSeedIcon(shape, cx, cy, size, isHover, isSelected) {
     endShape(CLOSE);
   } else if (shape === "star") {
     let angle = TWO_PI / 5;
-    let half = effectiveSize * 0.4;
-    let full = effectiveSize * 0.8;
+    let starSize = size * (isSelected ? 1.1 : isHover ? 1.05 : 1.0);
+    let half = starSize * 0.35;
+    let full = starSize * 0.7;
     beginShape();
     for (let a = -HALF_PI, i = 0; i < 10; i++, a += angle / 2) {
       let r = i % 2 === 0 ? full : half;
@@ -794,20 +1046,20 @@ function drawSeedIcon(shape, cx, cy, size, isHover, isSelected) {
 }
 
 function handleSeedClick() {
-  let paletteWidth = min(width * 0.8, 640);
-  let itemWidth = paletteWidth / seeds.length;
-  let centerY = height * 0.55;
+  let totalSeeds = seeds.length;
 
-  for (let i = 0; i < seeds.length; i++) {
-    let cx = width / 2 - paletteWidth / 2 + itemWidth * (i + 0.5);
-    let w = itemWidth * 0.7;
-    let h = w;
+  for (let i = 0; i < totalSeeds; i++) {
+    let layout = getSeedItemLayout(i);
+    let cx = layout.cx;
+    let cy = layout.cy;
+    let hitW = layout.hitW;
+    let hitH = layout.hitH;
 
     if (
-      mouseX > cx - w / 2 &&
-      mouseX < cx + w / 2 &&
-      mouseY > centerY - h / 2 &&
-      mouseY < centerY + h / 2
+      uiPointerX > cx - hitW / 2 &&
+      uiPointerX < cx + hitW / 2 &&
+      uiPointerY > cy - hitH / 2 &&
+      uiPointerY < cy + hitH / 2
     ) {
       if (seedSelectionPhase === 0) {
         selectedSeedIndex = i;
@@ -820,16 +1072,15 @@ function handleSeedClick() {
 }
 
 function handleColorClick() {
-  let paletteWidth = min(width * 0.7, 520);
-  let itemWidth = paletteWidth / colors.length;
-  let centerY = height * 0.55;
+  let totalColors = colors.length;
 
-  for (let i = 0; i < colors.length; i++) {
-    let cx = width / 2 - paletteWidth / 2 + itemWidth * (i + 0.5);
-    let cy = centerY;
-    let r = itemWidth * 0.35;
+  for (let i = 0; i < totalColors; i++) {
+    let layout = getColorItemLayout(i);
+    let cx = layout.cx;
+    let cy = layout.cy;
+    let hitR = layout.hitR;
 
-    if (dist(mouseX, mouseY, cx, cy) < r) {
+    if (dist(uiPointerX, uiPointerY, cx, cy) < hitR) {
       selectedColorIndex = i;
       accentColor = color(...colors[selectedColorIndex].value);
       break;
@@ -838,12 +1089,12 @@ function handleColorClick() {
 }
 
 function handleSeedNextClick() {
-  let btnW = 120;
-  let btnH = 40;
-  let btnX = width * 0.85;
-  let btnY = height * 0.85;
+  let btnW = Math.min(width * 0.3, 260);
+  let btnH = 64;
+  let btnX = width * 0.8;
+  let btnY = height * 0.86;
 
-  if (mouseX > btnX - btnW / 2 && mouseX < btnX + btnW / 2 && mouseY > btnY - btnH / 2 && mouseY < btnY + btnH / 2) {
+  if (uiPointerX > btnX - btnW / 2 && uiPointerX < btnX + btnW / 2 && uiPointerY > btnY - btnH / 2 && uiPointerY < btnY + btnH / 2) {
     if (seedSelectionPhase === 0) {
       seedSelectionPhase = 1;
     } else {
@@ -856,12 +1107,12 @@ function handleSeedNextClick() {
 }
 
 function handleColorNextClick() {
-  let btnW = 120;
-  let btnH = 40;
-  let btnX = width * 0.85;
-  let btnY = height * 0.85;
+  let btnW = Math.min(width * 0.3, 260);
+  let btnH = 64;
+  let btnX = width * 0.8;
+  let btnY = height * 0.86;
 
-  if (mouseX > btnX - btnW / 2 && mouseX < btnX + btnW / 2 && mouseY > btnY - btnH / 2 && mouseY < btnY + btnH / 2) {
+  if (uiPointerX > btnX - btnW / 2 && uiPointerX < btnX + btnW / 2 && uiPointerY > btnY - btnH / 2 && uiPointerY < btnY + btnH / 2) {
     seedSelectionPhase = 0;
     currentScene = "seedSelect";
     return true;
@@ -870,17 +1121,14 @@ function handleColorNextClick() {
 }
 
 function handleSoilClick() {
-  let paletteWidth = min(width * 0.7, 520);
-  let itemWidth = paletteWidth / soils.length;
-  let centerY = height * 0.55;
-
   for (let i = 0; i < soils.length; i++) {
-    let cx = width / 2 - paletteWidth / 2 + itemWidth * (i + 0.5);
-    let cy = centerY;
-    let w = itemWidth * 0.6;
-    let h = w * 0.5;
+    let layout = getSoilItemLayout(i);
+    let cx = layout.cx;
+    let cy = layout.cy;
+    let hitW = layout.hitW;
+    let hitH = layout.hitH;
 
-    if (mouseX > cx - w / 2 && mouseX < cx + w / 2 && mouseY > cy - h / 2 && mouseY < cy + h / 2) {
+    if (uiPointerX > cx - hitW / 2 && uiPointerX < cx + hitW / 2 && uiPointerY > cy - hitH / 2 && uiPointerY < cy + hitH / 2) {
       selectedSoilIndex = i;
       break;
     }
@@ -888,12 +1136,12 @@ function handleSoilClick() {
 }
 
 function handleSoilNextClick() {
-  let btnW = 120;
-  let btnH = 40;
-  let btnX = width * 0.85;
-  let btnY = height * 0.85;
+  let btnW = Math.min(width * 0.5, 420);
+  let btnH = 96;
+  let btnX = width * 0.8;
+  let btnY = height * 0.86;
 
-  if (mouseX > btnX - btnW / 2 && mouseX < btnX + btnW / 2 && mouseY > btnY - btnH / 2 && mouseY < btnY + btnH / 2) {
+  if (uiPointerX > btnX - btnW / 2 && uiPointerX < btnX + btnW / 2 && uiPointerY > btnY - btnH / 2 && uiPointerY < btnY + btnH / 2) {
     currentScene = "waterSelect";
     return true;
   }
@@ -903,7 +1151,7 @@ function handleSoilNextClick() {
 function handleWaterClick() {
   if (!waterButtons.length) return;
   for (const btn of waterButtons) {
-    if (dist(mouseX, mouseY, btn.cx, btn.cy) < btn.radius) {
+    if (dist(uiPointerX, uiPointerY, btn.cx, btn.cy) < btn.radius) {
       selectedWaterIndex = btn.index;
       return;
     }
@@ -925,7 +1173,7 @@ function enterBloomScene() {
 function updateGrowProgress() {
   let cx = width / 2;
   let cy = height / 2;
-  let angle = atan2(mouseY - cy, mouseX - cx);
+  let angle = atan2(uiPointerY - cy, uiPointerX - cx);
 
   if (lastGrowAngle !== null) {
     let diff = angle - lastGrowAngle;
@@ -1162,7 +1410,7 @@ function drawSpirograph(
 }
 
 function isPointInsideRect(px, py, x, y, w, h) {
-  return px >= x && px <= x + w && py >= y && py <= y + h;
+  return px >= x && py >= y && px <= x + w && py <= y + h;
 }
 
 function handleBloomClick() {
@@ -1170,7 +1418,7 @@ function handleBloomClick() {
   const btnWidth = 180;
   const btnHeight = 46;
   for (const btn of bloomButtons) {
-    if (isPointInsideRect(mouseX, mouseY, btn.x, btn.y, btnWidth, btnHeight)) {
+    if (isPointInsideRect(uiPointerX, uiPointerY, btn.x, btn.y, btnWidth, btnHeight)) {
       currentScene = btn.target === "opening" ? "opening" : "colorSelect";
       growProgress = 0;
       lastGrowAngle = null;
