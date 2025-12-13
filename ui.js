@@ -1,6 +1,3 @@
-// ui.js
-// シーン管理やイベント配線のスタブ。後で p5.js スケッチと連携して差し替える。
-
 export const Scene = {
   OPENING: "opening",
   COLOR: "colorSelect",

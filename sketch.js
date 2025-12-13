@@ -226,6 +226,8 @@ function draw() {
   }
   if (currentScene === "opening") {
     drawOpeningScene();
+  } else if (currentScene === "openingGuide") {
+    drawOpeningGuideScene();
   } else if (currentScene === "colorSelect") {
     drawColorScene();
   } else if (currentScene === "seedSelect") {
@@ -360,52 +362,116 @@ function onHandsResults(results) {
   const dx = ix - tx;
   const dy = iy - ty;
   const distSq = dx * dx + dy * dy;
-  const pinchThresholdSq = 80 * 80;
+  const pinchThresholdSq = 50 * 50; // 判定を少し厳しめに
   isPinching = distSq < pinchThresholdSq;
 }
 
 function drawOpeningScene() {
   noStroke();
+
+  // わずかに上下に揺れる演出
+  let floatOffset = sin(frameCount * 0.015) * 8;
+
+  // タイトルまわり
   textAlign(CENTER, CENTER);
 
-  // 日本語メインコピー（必須表示・中央）
-  let baseY = height * 0.4;
-  let floatOffset = sin(frameCount * 0.02) * 10;
+  // タイトル
+  let titleY = height * 0.28 + floatOffset;
+  let titleText = "Geometric Anthesis";
+
+  push();
+  let glowCol = color(
+    red(accentColor),
+    green(accentColor),
+    blue(accentColor),
+    220
+  );
+  textSize(51); // 元の約1.5倍
+  fill(255);
+  let ctx = drawingContext;
+  ctx.save();
+  ctx.shadowBlur = 30;
+  ctx.shadowColor = glowCol.toString();
+  text(titleText, width / 2, titleY);
+  ctx.restore();
+  pop();
+
+  // サブタイトル（約1.5倍）
+  textSize(36);
+  text("あなただけの花を咲かせよう", width / 2, height * 0.36 + floatOffset * 0.8);
+
+  // 説明テキスト
+  textAlign(CENTER, TOP);
+  textSize(14);
+  fill(220);
+
+  let story =
+    "鏡を持って自分自身を画面に映してみて？\n" +
+    "そしたら手をかざして。\n" +
+    "指に緑の丸が映ったらそれはあなたの魔法の力。\n" +
+    "緑の丸を表示したまま手をぎゅっと握って進んでみて。";
+
+  let storyBoxWidth = min(width * 0.7, 560);
+  let storyX = width / 2;
+  // タイトルとの間隔を少し広げるため、ストーリーをやや下げる
+  let storyY = height * 0.52 + floatOffset * 0.4;
+
+  // 中央揃えのマルチラインテキスト
+  let lines = story.split("\n");
+  let lineHeight = 22;
+  let startY = storyY - ((lines.length - 1) * lineHeight) / 2;
+  for (let i = 0; i < lines.length; i++) {
+    text(lines[i], storyX, startY + i * lineHeight);
+  }
+}
+
+function drawOpeningGuideScene() {
+  noStroke();
+  textAlign(CENTER, TOP);
 
   fill(255);
-  textSize(36);
-  text("あなただけの花を咲かせよう", width / 2, baseY + floatOffset);
+  textSize(30);
+  let guide =
+    "ここから先は、あなたの花に色とかたちが宿っていく物語。\n" +
+    "最初の画面では、花びらの色をひとつえらびます。\n" +
+    "つぎの画面では、外側と内側にひらく種のかたちをえらびます。\n" +
+    "それから土と水をそっと与えると、花はゆっくりと咲いていきます。\n" +
+    "画面の中の小さな緑の丸は、あなたの指さきのしるし。\n" +
+    "その緑の丸をつまむように指を近づけるか手をぎゅっと握ると、この世界での『クリック』になるよ。\n" +
+    "準備ができたら、『次へ』のボタンを押して色えらびの扉をひらいてみて。";
 
-  // 多言語コピーを画面いっぱいにばらまく
-  let startY = height * 0.1;
-  let lineGap = 26;
-  for (let i = 0; i < openingPhrases.length; i++) {
-    let phrase = openingPhrases[i];
-
-    // 言語ごとに大きさを少し変える（マチマチでOKという要件）
-    let size = 14 + (i % 5) * 4;
-    textSize(size);
-
-    // わずかに色と位置を揺らして、画面全体にリズムを付ける
-    let wobbleX = sin(frameCount * 0.01 + i) * 60;
-    let y = startY + i * lineGap + floatOffset * 0.3;
-
-    // 日本語メインコピーの背後には文字を描かない帯を作る
-    let bandCenter = baseY + floatOffset;
-    let bandHalfHeight = 40; // 帯の高さ（必要なら後で調整）
-    if (y > bandCenter - bandHalfHeight && y < bandCenter + bandHalfHeight) {
-      continue;
-    }
-
-    fill(200 + (i % 3) * 15);
-    text(phrase, width / 2 + wobbleX, y);
+  let lines = guide.split("\n");
+  let lineHeight = 42;
+  let blockCenterY = height * 0.45;
+  let startY = blockCenterY - ((lines.length - 1) * lineHeight) / 2;
+  for (let i = 0; i < lines.length; i++) {
+    text(lines[i], width / 2, startY + i * lineHeight);
   }
 
-  // 操作説明（今日はクリックで次へ）
-  textSize(10);
-  fill(200);
-  textAlign(RIGHT, BOTTOM);
-  text("手をかざしてください（今日はクリックで次へ進みます）", width * 0.98, height * 0.96);
+  // 次へボタン（色選択へ）
+  let btnW = Math.min(width * 0.5, 420);
+  let btnH = 96;
+  let btnX = width * 0.8;
+  let btnY = height * 0.86;
+
+  let isHoverNext =
+    uiPointerX > btnX - btnW / 2 &&
+    uiPointerX < btnX + btnW / 2 &&
+    uiPointerY > btnY - btnH / 2 &&
+    uiPointerY < btnY + btnH / 2;
+
+  rectMode(CENTER);
+  if (isHoverNext) {
+    fill(255, 200, 230, 220);
+  } else {
+    fill(200, 160, 210, 200);
+  }
+  rect(btnX, btnY, btnW, btnH, 10);
+
+  fill(40, 20, 60);
+  textAlign(CENTER, CENTER);
+  textSize(32);
+  text("次へ", btnX, btnY);
 }
 
 function drawColorScene() {
@@ -415,10 +481,6 @@ function drawColorScene() {
   fill(255);
   textSize(28);
   text("色を選んでください", width / 2, height * 0.2);
-
-  textSize(14);
-  fill(210);
-  text("今日はマウスで色を選択します", width / 2, height * 0.27);
   let totalColors = colors.length;
 
   for (let i = 0; i < totalColors; i++) {
@@ -462,7 +524,7 @@ function drawColorScene() {
 
   fill(40, 20, 60);
   textAlign(CENTER, CENTER);
-  textSize(16);
+  textSize(32);
   text("次へ", btnX, btnY);
 }
 
@@ -485,7 +547,7 @@ function drawSeedScene() {
   fill(210);
   text(
     isOuterPhase
-      ? "今日はマウスで外枠になる図形を選択します"
+      ? "外枠になる図形を選択します"
       : "次に、内側で動きをつくる図形を選択します",
     width / 2,
     height * 0.27
@@ -529,7 +591,7 @@ function drawSeedScene() {
 
   fill(40, 20, 60);
   textAlign(CENTER, CENTER);
-  textSize(16);
+  textSize(32);
   text("次へ", btnX, btnY);
 }
 
@@ -624,7 +686,11 @@ function mousePressed() {
 
 function handlePrimaryAction() {
   if (currentScene === "opening") {
-    currentScene = "colorSelect";
+    // Opening のあとに説明シーンへ
+    currentScene = "openingGuide";
+  } else if (currentScene === "openingGuide") {
+    // 説明シーンの「次へ」ボタンで色選択へ
+    handleOpeningGuideNextClick();
   } else if (currentScene === "colorSelect") {
     if (!handleColorNextClick()) {
       handleColorClick();
@@ -646,9 +712,27 @@ function handlePrimaryAction() {
   }
 }
 
+function handleOpeningGuideNextClick() {
+  let btnW = Math.min(width * 0.5, 420);
+  let btnH = 96;
+  let btnX = width * 0.8;
+  let btnY = height * 0.86;
+
+  if (
+    uiPointerX > btnX - btnW / 2 &&
+    uiPointerX < btnX + btnW / 2 &&
+    uiPointerY > btnY - btnH / 2 &&
+    uiPointerY < btnY + btnH / 2
+  ) {
+    currentScene = "colorSelect";
+    return true;
+  }
+  return false;
+}
+
 function handleWaterNextClick() {
-  let btnW = Math.min(width * 0.3, 260);
-  let btnH = 64;
+  let btnW = Math.min(width * 0.45, 390);
+  let btnH = 96;
   let btnX = width * 0.8;
   let btnY = height * 0.86;
 
@@ -673,7 +757,6 @@ function drawSoilScene() {
 
   textSize(14);
   fill(210);
-  text("今日はマウスで土を選択します", width / 2, height * 0.27);
 
   for (let i = 0; i < soils.length; i++) {
     let layout = getSoilItemLayout(i);
@@ -698,7 +781,7 @@ function drawSoilScene() {
     } else {
       fill(r, g, b);
     }
-    rect(cx, cy, w * sizeFactor, h * sizeFactor, 8);
+    rect(cx, cy, w * sizeFactor * 0.7, h * sizeFactor * 0.7, 8);
 
     // 少しだけテクスチャ風のドット
     push();
@@ -712,16 +795,16 @@ function drawSoilScene() {
     }
     pop();
 
-    // ラベル
+    // ラベル（少し大きめ・約60）
     fill(230);
     textAlign(CENTER, TOP);
-    textSize(20);
+    textSize(60);
     text(soils[i].label, cx, cy + h * sizeFactor * 0.7);
   }
 
-  // 次のシーン（水）へ進むボタン（今日はクリックで遷移）
-  let btnW = min(width * 0.4, 360);
-  let btnH = 80;
+  // 次のシーン（水）へ進むボタン
+  let btnW = min(width * 0.6, 540);
+  let btnH = 120;
   let btnX = width * 0.8;
   let btnY = height * 0.86;
 
@@ -737,7 +820,7 @@ function drawSoilScene() {
 
   fill(40, 20, 60);
   textAlign(CENTER, CENTER);
-  textSize(16);
+  textSize(32);
   text("次へ", btnX, btnY);
 }
 
@@ -751,7 +834,6 @@ function drawWaterScene() {
 
   textSize(14);
   fill(210);
-  text("今日はマウスで水量を選択します", width / 2, height * 0.27);
 
   let paletteWidth = min(width * 0.8, 640);
   let itemWidth = paletteWidth / waters.length;
@@ -788,15 +870,15 @@ function drawWaterScene() {
     // ラベル
     fill(230);
     textAlign(CENTER, TOP);
-    textSize(14);
+    textSize(28);
     text(waters[i].label, cx, cy + radius * sizeFactor + 10);
 
     waterButtons.push({ cx, cy, radius: radius * sizeFactor * 1.1, index: i });
   }
 
   // 次へ
-  let btnW = min(width * 0.3, 260);
-  let btnH = 64;
+  let btnW = min(width * 0.45, 390);
+  let btnH = 96;
   let btnX = width * 0.8;
   let btnY = height * 0.86;
   waterNextButton = { x: btnX - btnW / 2, y: btnY - btnH / 2, w: btnW, h: btnH };
@@ -813,7 +895,7 @@ function drawWaterScene() {
 
   fill(40, 20, 60);
   textAlign(CENTER, CENTER);
-  textSize(16);
+  textSize(32);
   text("次へ", btnX, btnY);
 }
 
@@ -851,6 +933,7 @@ function drawGrowScene() {
         glowColor: mainStroke,
         glowStrength: 22,
         showMechanism: true,
+        showMechanismArm: false,
         mechanismColor: outlineStroke,
       });
     });
@@ -878,9 +961,6 @@ function drawGrowScene() {
   fill(255);
   textSize(28);
   text("手をぐるぐる回して成長させよう", width / 2, height * 0.15);
-  textSize(16);
-  fill(210);
-  text("今日はマウスを円を描くように動かすだけでOK", width / 2, height * 0.22);
 
   if (progress >= 1 && currentScene === "grow") {
     enterBloomScene();
@@ -926,7 +1006,7 @@ function drawBloomScene() {
       scaleFactor: pulse,
     });
 
-    // 祝福用にホワイトのハイライトを重ねる
+    // ホワイトのハイライトを重ねる
     drawSpirograph(params, 1, {
       strokeWidth: soilStyle.strokeWeight + 0.3,
       strokeColor: color(255, 255, 255, 220),
@@ -941,9 +1021,6 @@ function drawBloomScene() {
   fill(255);
   textSize(32);
   text("花が咲きました", width / 2, height * 0.2);
-  textSize(18);
-  fill(220);
-  text("ゆらぎと光、音でお祝い（演出は今後実装）", width / 2, height * 0.25);
 
   // Buttons to restart journey
   let btnWidth = Math.min(width * 0.35, 260);
@@ -959,7 +1036,7 @@ function drawBloomScene() {
     rect(btn.x, btn.y, btnWidth, btnHeight, 12);
     fill(40, 20, 60);
     textAlign(CENTER, CENTER);
-    textSize(16);
+    textSize(32);
     text(btn.label, btn.x + btnWidth / 2, btn.y + btnHeight / 2 + 1);
   }
 }
@@ -1089,8 +1166,9 @@ function handleColorClick() {
 }
 
 function handleSeedNextClick() {
-  let btnW = Math.min(width * 0.3, 260);
-  let btnH = 64;
+  // drawSeedScene の「次へ」ボタンと同じサイズに合わせる
+  let btnW = Math.min(width * 0.5, 420);
+  let btnH = 96;
   let btnX = width * 0.8;
   let btnY = height * 0.86;
 
@@ -1107,8 +1185,9 @@ function handleSeedNextClick() {
 }
 
 function handleColorNextClick() {
-  let btnW = Math.min(width * 0.3, 260);
-  let btnH = 64;
+  // drawColorScene の「次へ」ボタンと同じサイズに合わせる
+  let btnW = Math.min(width * 0.5, 420);
+  let btnH = 96;
   let btnX = width * 0.8;
   let btnY = height * 0.86;
 
@@ -1136,8 +1215,8 @@ function handleSoilClick() {
 }
 
 function handleSoilNextClick() {
-  let btnW = Math.min(width * 0.5, 420);
-  let btnH = 96;
+  let btnW = Math.min(width * 0.6, 540);
+  let btnH = 120;
   let btnX = width * 0.8;
   let btnY = height * 0.86;
 
@@ -1255,21 +1334,17 @@ function drawSpirograph(
   }
 
   const maxT = SPIRO_TURNS * TWO_PI * cappedProgress;
-  const step = 0.008; // 線の細かさ
+  const step = 0.008;
 
   push();
   translate(width / 2, height / 2);
   scale(scaleFactor);
 
-  // -----------------------------------------------------------
-  // 【追加部分】動画のような「トンネル状の軌跡」を描く処理
-  // -----------------------------------------------------------
   if (showMechanism) {
     // 養分の図形（内側で回っている形）を取得
     const nutrientShape = seeds[selectedNutrientIndex]?.shape || "circle";
 
     // 描画間隔（細かすぎると重くなり、粗すぎるとスカスカになるので調整）
-    // 動画のような密度にするには 0.1 〜 0.2 程度がおすすめ
     const trailStep = 0.15;
 
     // 軌跡の色（アクセントカラーを薄くしたもの）
@@ -1305,9 +1380,6 @@ function drawSpirograph(
       pop();
     }
   }
-  // -----------------------------------------------------------
-  // 【追加部分終わり】
-  // -----------------------------------------------------------
 
   // 点列を計算（ペン先の軌跡：今まで通りのメインの線）
   let points = [];
@@ -1355,7 +1427,7 @@ function drawSpirograph(
   endShape();
   pop();
 
-  // ---------- 現在位置のメカニズム（ペン先と円）の描画 ----------
+  // 現在位置のメカニズム（ペン先と円）の描画
   if (showMechanism) {
     const tCurrent = maxT;
     const nutrientShape = seeds[selectedNutrientIndex]?.shape || "circle";
@@ -1404,7 +1476,7 @@ function drawSpirograph(
     ellipse(px, py, 8, 8);
     pop();
   }
-  // ---------- メカニズム描画終わり ----------
+  // メカニズム描画終わり
 
   pop();
 }
@@ -1415,8 +1487,9 @@ function isPointInsideRect(px, py, x, y, w, h) {
 
 function handleBloomClick() {
   if (!bloomButtons?.length) return;
-  const btnWidth = 180;
-  const btnHeight = 46;
+  // drawBloomScene の再スタートボタンと同じサイズに合わせる
+  const btnWidth = Math.min(width * 0.35, 260);
+  const btnHeight = 70;
   for (const btn of bloomButtons) {
     if (isPointInsideRect(uiPointerX, uiPointerY, btn.x, btn.y, btnWidth, btnHeight)) {
       currentScene = btn.target === "opening" ? "opening" : "colorSelect";
