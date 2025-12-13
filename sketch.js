@@ -205,7 +205,7 @@ function traceSeedPath(ctx, shape, cx, cy, size) {
 }
 
 function draw() {
-  // UIで使うポインタ座標（手が取れていれば手、なければマウス）
+  // UIで使うポインタ座標
   const px = pointerX !== null ? pointerX : mouseX;
   const py = pointerY !== null ? pointerY : mouseY;
   uiPointerX = px;
@@ -346,7 +346,7 @@ function onHandsResults(results) {
   const indexTip = lm[8];
   const thumbTip = lm[4];
 
-  const ixNorm = 1 - indexTip.x; // 鏡映しにする
+  const ixNorm = 1 - indexTip.x;
   const iyNorm = indexTip.y;
   const txNorm = 1 - thumbTip.x;
   const tyNorm = thumbTip.y;
@@ -375,8 +375,8 @@ function drawOpeningScene() {
   // タイトルまわり
   textAlign(CENTER, CENTER);
 
-  // タイトル
-  let titleY = height * 0.28 + floatOffset;
+  // タイトル（少し上に配置してサブタイトルとの間隔を広げる）
+  let titleY = height * 0.24 + floatOffset;
   let titleText = "Geometric Anthesis";
 
   push();
@@ -386,7 +386,7 @@ function drawOpeningScene() {
     blue(accentColor),
     220
   );
-  textSize(51); // 元の約1.5倍
+  textSize(60);
   fill(255);
   let ctx = drawingContext;
   ctx.save();
@@ -396,7 +396,7 @@ function drawOpeningScene() {
   ctx.restore();
   pop();
 
-  // サブタイトル（約1.5倍）
+  // サブタイトル
   textSize(36);
   text("あなただけの花を咲かせよう", width / 2, height * 0.36 + floatOffset * 0.8);
 
