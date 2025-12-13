@@ -375,7 +375,7 @@ function drawOpeningScene() {
   // タイトルまわり
   textAlign(CENTER, CENTER);
 
-  // タイトル（少し上に配置してサブタイトルとの間隔を広げる）
+  // タイトル
   let titleY = height * 0.24 + floatOffset;
   let titleText = "Geometric Anthesis";
 
