@@ -266,26 +266,12 @@ function draw() {
     circle(pointerX, pointerY, cursorSize * 1.4);
     pop();
   }
-
-  // デバッグ表示を一番上に重ねる
-  push();
-  fill(255);
-  textSize(16);
-  textAlign(LEFT, BOTTOM);
-  text(
-    `camReady: ${camReady}  model: ${handModelStatus}  pinch: ${isPinching}`,
-    30,
-    height - 30
-  );
-  textSize(12);
-  text(handStatusDetail, 30, height - 12);
-  pop();
 }
 
 function drawCameraBackdrop() {
   push();
   translate(width, 0);
-  scale(-1, 1); // mirror so movement feels natural
+  scale(-1, 1);
   const camAspect = cam.width / cam.height;
   const canvasAspect = width / height;
   let drawWidth, drawHeight;
@@ -376,7 +362,7 @@ function drawOpeningScene() {
   textAlign(CENTER, CENTER);
 
   // タイトル
-  let titleY = height * 0.24 + floatOffset;
+  let titleY = height * 0.30 + floatOffset;
   let titleText = "Geometric Anthesis";
 
   push();
@@ -398,7 +384,7 @@ function drawOpeningScene() {
 
   // サブタイトル
   textSize(36);
-  text("あなただけの花を咲かせよう", width / 2, height * 0.36 + floatOffset * 0.8);
+  text("あなただけの花を咲かせよう", width / 2, height * 0.39 + floatOffset * 0.8);
 
   // 説明テキスト
   textAlign(CENTER, TOP);
@@ -413,8 +399,8 @@ function drawOpeningScene() {
 
   let storyBoxWidth = min(width * 0.7, 560);
   let storyX = width / 2;
-  // タイトルとの間隔を少し広げるため、ストーリーをやや下げる
-  let storyY = height * 0.52 + floatOffset * 0.4;
+  // タイトルとの間隔を保ちつつ、全体を少し下に配置
+  let storyY = height * 0.55 + floatOffset * 0.4;
 
   // 中央揃えのマルチラインテキスト
   let lines = story.split("\n");
@@ -922,8 +908,8 @@ function drawGrowScene() {
     let ghostStroke = color(red(accentColor), green(accentColor), blue(accentColor), 50 * reveal);
 
     withSeedClip(currentShape, centerX, centerY, shapeSize, () => {
-      // カメラ映像を優先したいので、土色のオーバーレイはごく薄くする
-      fill(red(soilStyle.bgTint), green(soilStyle.bgTint), blue(soilStyle.bgTint), 15 * reveal);
+      // カメラ映像を優先しつつも、土の違いがしっかり分かるように少しだけさらに濃くする
+      fill(red(soilStyle.bgTint), green(soilStyle.bgTint), blue(soilStyle.bgTint), 140 * reveal);
       rect(0, 0, width, height);
       drawSpirograph(params, progress, {
         strokeWidth: soilStyle.strokeWeight + 0.6,
@@ -986,10 +972,10 @@ function drawBloomScene() {
   let glowStroke = color(255, 230, 245, 230);
 
   withSeedClip(currentShape, centerX, centerY, shapeSize, () => {
-    // bloomシーンでも、カメラ映像を優先するため土色オーバーレイはかなり薄くする
+    // bloomシーンでも、カメラ映像を優先しつつ土の色味がよりはっきり分かる程度にオーバーレイをかける
     rectMode(CORNER);
     noStroke();
-    fill(red(soilStyle.bgTint), green(soilStyle.bgTint), blue(soilStyle.bgTint), 15);
+    fill(red(soilStyle.bgTint), green(soilStyle.bgTint), blue(soilStyle.bgTint), 90);
     rect(0, 0, width, height);
 
     // メインの花：growシーンと同じ描写を100%進行で行い、pulsingだけ加える
@@ -1302,11 +1288,15 @@ function getSpiroParams() {
 
 function getSoilStyle() {
   const soil = soils[selectedSoilIndex] || soils[0];
-  if (soil.key === "dark") return { strokeWeight: 1.8, bgTint: color(20, 15, 25) };
-  if (soil.key === "sand") return { strokeWeight: 1.6, bgTint: color(60, 30, 10) };
-  if (soil.key === "white") return { strokeWeight: 1.4, bgTint: color(180, 200, 220) };
-  if (soil.key === "moss") return { strokeWeight: 2.1, bgTint: color(10, 30, 20) };
-  return { strokeWeight: 1.5, bgTint: color(0) };
+  const [sr, sg, sb] = soil.color;
+
+  // ボタンで見えている土の色をそのままベースにしつつ、
+  // 種ごとの描線の太さだけ土タイプで少し変える
+  if (soil.key === "dark") return { strokeWeight: 2.2, bgTint: color(sr, sg, sb) };
+  if (soil.key === "sand") return { strokeWeight: 1.8, bgTint: color(sr, sg, sb) };
+  if (soil.key === "white") return { strokeWeight: 1.4, bgTint: color(sr, sg, sb) };
+  if (soil.key === "moss") return { strokeWeight: 2.0, bgTint: color(sr, sg, sb) };
+  return { strokeWeight: 1.6, bgTint: color(sr, sg, sb) };
 }
 
 function drawSpirograph(
