@@ -348,7 +348,8 @@ function onHandsResults(results) {
   const dx = ix - tx;
   const dy = iy - ty;
   const distSq = dx * dx + dy * dy;
-  const pinchThresholdSq = 50 * 50; // 判定を少し厳しめに
+  const pinchThreshold = currentScene === "opening" ? 110 : 70; // 判定を少し厳しめに
+  const pinchThresholdSq = pinchThreshold * pinchThreshold;
   isPinching = distSq < pinchThresholdSq;
 }
 
@@ -388,7 +389,7 @@ function drawOpeningScene() {
 
   // 説明テキスト
   textAlign(CENTER, TOP);
-  textSize(14);
+  textSize(30);
   fill(220);
 
   let story =
@@ -404,7 +405,7 @@ function drawOpeningScene() {
 
   // 中央揃えのマルチラインテキスト
   let lines = story.split("\n");
-  let lineHeight = 22;
+  let lineHeight = 42;
   let startY = storyY - ((lines.length - 1) * lineHeight) / 2;
   for (let i = 0; i < lines.length; i++) {
     text(lines[i], storyX, startY + i * lineHeight);
@@ -523,20 +524,10 @@ function drawSeedScene() {
   let isOuterPhase = seedSelectionPhase === 0;
   text(
     isOuterPhase
-      ? "種（外枠）を選んでください"
-      : "養分（内側で動く図形）を選んでください",
+      ? "種を選んでください"
+      : "養分を選んでください",
     width / 2,
     height * 0.2
-  );
-
-  textSize(14);
-  fill(210);
-  text(
-    isOuterPhase
-      ? "外枠になる図形を選択します"
-      : "次に、内側で動きをつくる図形を選択します",
-    width / 2,
-    height * 0.27
   );
 
   textSize(24);
@@ -559,7 +550,7 @@ function drawSeedScene() {
     drawSeedIcon(seeds[i].shape, cx, cy, size, isHover, isSelected);
   }
 
-  // 次のシーンへ進むボタン（今日はクリックで遷移）
+  // 次のシーンへ進むボタン
   let btnW = Math.min(width * 0.5, 420);
   let btnH = 96;
   let btnX = width * 0.8;
@@ -614,7 +605,7 @@ function getSeedItemLayout(index) {
   const cellWidth = gridWidth / itemsPerRow;
   const baseSize = Math.min(cellWidth * 0.7, height * 0.2);
 
-  const centerYBase = height * 0.6;
+  const centerYBase = height * 0.54;
   const rowSpacing = baseSize * 1.9;
   const cy = centerYBase + (row - (rows - 1) / 2) * rowSpacing;
 
@@ -639,8 +630,8 @@ function getSoilItemLayout(index) {
   const baseW = Math.min(cellWidth * 0.85, width * 0.35);
   const baseH = baseW * 0.6;
 
-  const centerYBase = height * 0.58;
-  const rowSpacing = baseH * 2.3;
+  const centerYBase = height * 0.52;
+  const rowSpacing = baseH * 2.1;
   const cy = centerYBase + (row - (rows - 1) / 2) * rowSpacing;
 
   const startX = width / 2 - gridWidth / 2;
@@ -717,7 +708,7 @@ function handleOpeningGuideNextClick() {
 }
 
 function handleWaterNextClick() {
-  let btnW = Math.min(width * 0.45, 390);
+  let btnW = Math.min(width * 0.5, 420);
   let btnH = 96;
   let btnX = width * 0.8;
   let btnY = height * 0.86;
@@ -738,10 +729,10 @@ function drawSoilScene() {
   textAlign(CENTER, CENTER);
 
   fill(255);
-  textSize(28);
-  text("土を選んでください", width / 2, height * 0.2);
+  textSize(40);
+  text("土を選んでください", width / 2, height * 0.16);
 
-  textSize(14);
+  textSize(20);
   fill(210);
 
   for (let i = 0; i < soils.length; i++) {
@@ -784,13 +775,13 @@ function drawSoilScene() {
     // ラベル（少し大きめ・約60）
     fill(230);
     textAlign(CENTER, TOP);
-    textSize(60);
+    textSize(36);
     text(soils[i].label, cx, cy + h * sizeFactor * 0.7);
   }
 
   // 次のシーン（水）へ進むボタン
-  let btnW = min(width * 0.6, 540);
-  let btnH = 120;
+  let btnW = min(width * 0.5, 420);
+  let btnH = 96;
   let btnX = width * 0.8;
   let btnY = height * 0.86;
 
@@ -863,7 +854,7 @@ function drawWaterScene() {
   }
 
   // 次へ
-  let btnW = min(width * 0.45, 390);
+  let btnW = min(width * 0.5, 420);
   let btnH = 96;
   let btnX = width * 0.8;
   let btnY = height * 0.86;
@@ -1009,8 +1000,8 @@ function drawBloomScene() {
   text("花が咲きました", width / 2, height * 0.2);
 
   // Buttons to restart journey
-  let btnWidth = Math.min(width * 0.35, 260);
-  let btnHeight = 70;
+  let btnWidth = Math.min(width * 0.5, 420);
+  let btnHeight = 96;
   bloomButtons = [
     { label: "Openingへ", target: "opening", x: width * 0.35 - btnWidth / 2, y: height * 0.8 - btnHeight / 2 },
     { label: "色選びへ", target: "colorSelect", x: width * 0.65 - btnWidth / 2, y: height * 0.8 - btnHeight / 2 },
@@ -1201,8 +1192,8 @@ function handleSoilClick() {
 }
 
 function handleSoilNextClick() {
-  let btnW = Math.min(width * 0.6, 540);
-  let btnH = 120;
+  let btnW = Math.min(width * 0.5, 420);
+  let btnH = 96;
   let btnX = width * 0.8;
   let btnY = height * 0.86;
 
@@ -1478,8 +1469,8 @@ function isPointInsideRect(px, py, x, y, w, h) {
 function handleBloomClick() {
   if (!bloomButtons?.length) return;
   // drawBloomScene の再スタートボタンと同じサイズに合わせる
-  const btnWidth = Math.min(width * 0.35, 260);
-  const btnHeight = 70;
+  const btnWidth = Math.min(width * 0.5, 420);
+  const btnHeight = 96;
   for (const btn of bloomButtons) {
     if (isPointInsideRect(uiPointerX, uiPointerY, btn.x, btn.y, btnWidth, btnHeight)) {
       currentScene = btn.target === "opening" ? "opening" : "colorSelect";
