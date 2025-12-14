@@ -73,6 +73,7 @@ let pointerY = null;
 let isPinching = false;
 let wasPinching = false;
 let lastPrimaryActionAtMs = 0;
+let pinchStartMs = 0;
 let lastVideoTimeMs = -1; // not heavily used now, kept for possible tuning
 let lastHandInferMs = 0;
 let handInferInFlight = false;
@@ -116,6 +117,7 @@ async function initHandModel() {
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
+  noCursor();
   bgColor = color(10, 10, 20);
   accentColor = color(...colors[selectedColorIndex].value);
   cam = createCapture(VIDEO, () => (camReady = true));
@@ -249,11 +251,24 @@ function draw() {
 
   // ピンチジェスチャーをクリック扱いにする
   const pinchNow = isPinching;
-  if (pointerX !== null && pointerY !== null && pinchNow) {
-    const nowMs = millis();
-    if (nowMs - lastPrimaryActionAtMs > 500) {
-      handlePrimaryAction();
-      lastPrimaryActionAtMs = nowMs;
+  const nowMs = millis();
+  if (pinchNow && !wasPinching) {
+    pinchStartMs = nowMs; // ライジングエッジで開始時刻を記録
+  }
+
+  if (pointerX !== null && pointerY !== null) {
+    if (currentScene === "opening") {
+      // Opening ではホールド時間を要求して誤判定遷移を防ぐ
+      const holdMs = 450;
+      if (pinchNow && nowMs - pinchStartMs >= holdMs && nowMs - lastPrimaryActionAtMs > 900) {
+        handlePrimaryAction();
+        lastPrimaryActionAtMs = nowMs;
+      }
+    } else {
+      if (pinchNow && nowMs - lastPrimaryActionAtMs > 500) {
+        handlePrimaryAction();
+        lastPrimaryActionAtMs = nowMs;
+      }
     }
   }
   wasPinching = pinchNow;
